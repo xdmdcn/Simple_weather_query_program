@@ -145,6 +145,9 @@ class WeatherApp(QWidget):
         # 显示欢迎消息
         self.show_welcome_message()
 
+        self.last_request_time = 0  # 添加最后请求时间记录
+        self.MIN_REQUEST_INTERVAL = 3  # 最小请求间隔(秒)
+
     def set_app_style(self):
         """
         设置应用样式表
@@ -425,20 +428,20 @@ class WeatherApp(QWidget):
         self.layout_main.addLayout(cache_layout)
 
     def preload_weather_icons(self):
-        """
-        预加载所有天气图标到内存
-
-        返回:
-        dict: 天气图标字典，键为天气名称，值为QPixmap对象
-        """
+        """预加载天气图标（优化版）"""
         icon_dict = {}
-        png_files = glob.glob(os.path.join(self.folder_path, "*.png"))
+        try:
+            png_files = glob.glob(os.path.join(self.folder_path, "*.png"))
+            for png_file in png_files:
+                key = os.path.splitext(os.path.basename(png_file))[0]
 
-        for png_file in png_files:
-            # 获取不带扩展名的文件名作为键
-            key = os.path.splitext(os.path.basename(png_file))[0]
-            icon_dict[key] = QPixmap(png_file)
-
+                # 优化：只加载小尺寸图标
+                pixmap = QPixmap(png_file)
+                if not pixmap.isNull():
+                    # 缩放为实际需要的大小
+                    icon_dict[key] = pixmap.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        except Exception as e:
+            print(f"加载天气图标时出错: {e}")
         return icon_dict
 
     def connect_signals(self):
@@ -454,6 +457,13 @@ class WeatherApp(QWidget):
 
     def weather_info_return(self):
         """处理天气查询请求"""
+
+        # 添加频率限制检查
+        current_time = time.time()
+        if current_time - self.last_request_time < self.MIN_REQUEST_INTERVAL:
+            self.show_dialog("请求过于频繁，请稍后再试")
+            return
+
         # 获取选择的位置
         sheng = self.province.currentText()
         city = self.city.currentText()
@@ -524,6 +534,7 @@ class WeatherApp(QWidget):
 
         # 启动线程
         self.worker.start()
+        self.last_request_time = current_time  # 更新最后请求时间
 
     def handle_weather_data(self, data):
         """
@@ -588,6 +599,18 @@ class WeatherApp(QWidget):
 
     def cleanup_after_query(self, cache_key):
         """查询结束后的清理工作"""
+
+        if self.worker:
+            try:
+                if self.worker.isRunning():
+                    self.worker.quit()
+                    self.worker.wait(2000)  # 等待2秒
+                self.worker.deleteLater()
+            except Exception as e:
+                print(f"清理线程时出错: {e}")
+            finally:
+                self.worker = None
+
         # 隐藏加载指示器
         self.show_loading_indicator(False)
 
